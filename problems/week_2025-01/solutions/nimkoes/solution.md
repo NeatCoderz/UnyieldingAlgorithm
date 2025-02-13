@@ -25,15 +25,9 @@
 ## 💻 코드
 
 ```java
-import java.io.*;
-
 public class Test {
     public static void main(String[] ar) throws IOException {
-        BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
-
-        String name = in.readLine();
-        System.out.println("name = " + name);
+        System.out.println("Hello, world..!");
     }
 }
 ```
-
