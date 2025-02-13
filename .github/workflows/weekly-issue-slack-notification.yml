@@ -1,0 +1,95 @@
+name: Weekly Slack Issue Notification
+
+on:
+  schedule:
+    - cron: '0 23 * * 0'  # 매주 월요일 KST 오전 8시 (UTC 기준 일요일 23시)
+
+jobs:
+  notify-slack:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        run: |
+          gh auth login --with-token <<< "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Get Issues from Last Week
+        id: fetch_issues
+        run: |
+          START_DATE=$(date -u -d "7 days ago" '+%Y-%m-%d')
+          END_DATE=$(date -u '+%Y-%m-%d')
+          
+          echo "Fetching issues from $START_DATE to $END_DATE..."
+          
+          ISSUES=$(gh issue list --state open --limit 100 --json number,title,body,url,createdAt \
+            --search "created:$START_DATE..$END_DATE" | jq -c '.[]')
+          
+          if [[ -z "$ISSUES" ]]; then
+            echo "No new issues found."
+            exit 0
+          fi
+          
+          echo "::set-output name=issues::$ISSUES"
+
+      - name: Load Sent Issues Cache
+        id: cache_issues
+        uses: actions/cache@v3
+        with:
+          path: .sent_issues
+          key: sent-issues-cache
+
+      - name: Prepare Slack Payload
+        id: slack_payload
+        run: |
+          touch .sent_issues
+          NEW_ISSUES=""
+          
+          for issue in ${{ steps.fetch_issues.outputs.issues }}; do
+            ISSUE_NUMBER=$(echo "$issue" | jq -r '.number')
+            if grep -q "$ISSUE_NUMBER" .sent_issues; then
+              echo "Skipping already notified issue #$ISSUE_NUMBER"
+              continue
+            fi
+
+            TITLE=$(echo "$issue" | jq -r '.title')
+            BODY=$(echo "$issue" | jq -r '.body' | head -c 200)
+            URL=$(echo "$issue" | jq -r '.url')
+            
+            NEW_ISSUES+=$(cat <<EOM
+            {
+              "color": "#36a64f",
+              "title": "Issue #$ISSUE_NUMBER: $TITLE",
+              "title_link": "$URL",
+              "text": "$BODY",
+              "footer": "GitHub Repository: ${{ github.repository }}",
+              "ts": "$(date +%s)"
+            },
+            EOM
+            )
+            
+            echo "$ISSUE_NUMBER" >> .sent_issues
+          done
+          
+          if [[ -z "$NEW_ISSUES" ]]; then
+            echo "No new issues to notify."
+            exit 0
+          fi
+
+          JSON_PAYLOAD="{\"text\": \"🚀 *지난주 새롭게 등록된 이슈 목록*\","\
+          "\"attachments\": [${NEW_ISSUES%,}]}"
+          
+          echo "::set-output name=payload::$JSON_PAYLOAD"
+
+      - name: Send Notification to Slack
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: ${{ steps.slack_payload.outputs.payload }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Save Sent Issues Cache
+        run: |
+          sort -u .sent_issues > .sent_issues_tmp && mv .sent_issues_tmp .sent_issues
