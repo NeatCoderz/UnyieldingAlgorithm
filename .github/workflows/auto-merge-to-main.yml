@@ -34,3 +34,5 @@ jobs:
           git checkout main
           git merge --no-ff --no-edit ${{ github.ref_name }}  # Merge Commit 방식
           git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
